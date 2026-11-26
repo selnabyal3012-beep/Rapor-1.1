@@ -1,0 +1,85 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidSchoolState(data) {
+      return data.keys().hasAll(['id', 'schoolId', 'updatedAt', 'updatedBy', 'payloadJson', 'serverTime'])
+        && data.keys().hasOnly(['id', 'schoolId', 'namaSekolah', 'tahunPelajaran', 'updatedAt', 'updatedBy', 'payloadJson', 'serverTime'])
+        && isValidId(data.id)
+        && data.schoolId is string && data.schoolId.size() > 0 && data.schoolId.size() <= 64
+        && (!('namaSekolah' in data) || (data.namaSekolah is string && data.namaSekolah.size() <= 200))
+        && (!('tahunPelajaran' in data) || (data.tahunPelajaran is string && data.tahunPelajaran.size() <= 32))
+        && data.updatedAt is string && data.updatedAt.size() <= 64
+        && data.updatedBy is string && data.updatedBy.size() <= 200
+        && data.payloadJson is string && data.payloadJson.size() > 0 && data.payloadJson.size() <= 950000
+        && data.serverTime == request.time;
+    }
+
+    function isValidSchoolBackup(data) {
+      return data.keys().hasAll(['id', 'schoolId', 'updatedAt', 'updatedBy', 'payloadJson', 'serverTime'])
+        && data.keys().hasOnly(['id', 'schoolId', 'updatedAt', 'updatedBy', 'payloadJson', 'serverTime'])
+        && isValidId(data.id)
+        && data.schoolId is string && data.schoolId.size() > 0 && data.schoolId.size() <= 64
+        && data.updatedAt is string && data.updatedAt.size() <= 64
+        && data.updatedBy is string && data.updatedBy.size() <= 200
+        && data.payloadJson is string && data.payloadJson.size() > 0 && data.payloadJson.size() <= 950000
+        && data.serverTime == request.time;
+    }
+
+    // Default deny all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Test connection check (read-only ping for testConnection)
+    match /test/{docId} {
+      allow get: if isValidId(docId);
+      allow list, write: if false;
+    }
+
+    // User profiles: restricted strictly to owner
+    match /users/{userId} {
+      allow get: if isOwner(userId) && isValidId(userId);
+      allow list: if false;
+      allow create, update: if isOwner(userId) && isValidId(userId);
+      allow delete: if false;
+    }
+
+    // School cloud state & backups
+    match /schools/{schoolId} {
+      allow read, write: if false;
+
+      match /state/{stateId} {
+        allow get: if isSignedIn() && isValidId(schoolId) && isValidId(stateId);
+        allow list: if false;
+        allow create, update: if isSignedIn()
+          && isValidId(schoolId)
+          && isValidId(stateId)
+          && isValidSchoolState(request.resource.data);
+        allow delete: if false;
+      }
+
+      match /backups/{backupId} {
+        allow get: if isSignedIn() && isValidId(schoolId) && isValidId(backupId);
+        allow list: if isSignedIn() && resource.data.schoolId is string;
+        allow create, update: if isSignedIn()
+          && isValidId(schoolId)
+          && isValidId(backupId)
+          && isValidSchoolBackup(request.resource.data);
+        allow delete: if false;
+      }
+    }
+  }
+}
